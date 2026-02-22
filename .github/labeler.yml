@@ -216,6 +216,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/llm-task/**"
+"extensions: my-ops":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/my-ops/**"
 "extensions: lobster":
   - changed-files:
       - any-glob-to-any-file:

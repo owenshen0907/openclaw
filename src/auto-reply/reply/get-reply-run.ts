@@ -97,6 +97,7 @@ type RunPreparedReplyParams = {
   timeoutMs: number;
   isNewSession: boolean;
   resetTriggered: boolean;
+  suppressBareResetPrompt?: boolean;
   systemSent: boolean;
   sessionEntry?: SessionEntry;
   sessionStore?: Record<string, SessionEntry>;
@@ -141,6 +142,7 @@ export async function runPreparedReply(
     timeoutMs,
     isNewSession,
     resetTriggered,
+    suppressBareResetPrompt,
     systemSent,
     sessionKey,
     sessionId,
@@ -208,7 +210,9 @@ export async function runPreparedReply(
   const isBareSessionReset =
     isNewSession &&
     ((baseBodyTrimmedRaw.length === 0 && rawBodyTrimmed.length > 0) || isBareNewOrReset);
-  const baseBodyFinal = isBareSessionReset ? BARE_SESSION_RESET_PROMPT : baseBody;
+  const skipBareResetAssistantReply = isBareSessionReset && suppressBareResetPrompt === true;
+  const baseBodyFinal =
+    isBareSessionReset && !skipBareResetAssistantReply ? BARE_SESSION_RESET_PROMPT : baseBody;
   const inboundUserContext = buildInboundUserContextPrefix(
     isNewSession
       ? {
@@ -226,6 +230,40 @@ export async function runPreparedReply(
   const hasMediaAttachment = Boolean(
     sessionCtx.MediaPath || (sessionCtx.MediaPaths && sessionCtx.MediaPaths.length > 0),
   );
+  if (resetTriggered && command.isAuthorizedSender) {
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const channel = ctx.OriginatingChannel || (command.channel as any);
+    const to = ctx.OriginatingTo || command.from || command.to;
+    if (channel && to) {
+      const modelLabel = `${provider}/${model}`;
+      const defaultLabel = `${defaultProvider}/${defaultModel}`;
+      const modelAuthLabel = resolveModelAuthLabel({
+        provider,
+        cfg,
+        sessionEntry,
+        agentDir,
+      });
+      const authSuffix =
+        modelAuthLabel && modelAuthLabel !== "unknown" ? ` · 🔑 ${modelAuthLabel}` : "";
+      const text =
+        modelLabel === defaultLabel
+          ? `✅ New session started · model: ${modelLabel}${authSuffix}`
+          : `✅ New session started · model: ${modelLabel} (default: ${defaultLabel})${authSuffix}`;
+      await routeReply({
+        payload: { text },
+        channel,
+        to,
+        sessionKey,
+        accountId: ctx.AccountId,
+        threadId: ctx.MessageThreadId,
+        cfg,
+      });
+    }
+  }
+  if (skipBareResetAssistantReply) {
+    typing.cleanup();
+    return undefined;
+  }
   if (!baseBodyTrimmed && !hasMediaAttachment) {
     await typing.onReplyStart();
     logVerbose("Inbound body empty after normalization; skipping agent run");
@@ -317,36 +355,6 @@ export async function runPreparedReply(
           store[sessionKey] = sessionEntry;
         });
       }
-    }
-  }
-  if (resetTriggered && command.isAuthorizedSender) {
-    // oxlint-disable-next-line typescript/no-explicit-any
-    const channel = ctx.OriginatingChannel || (command.channel as any);
-    const to = ctx.OriginatingTo || command.from || command.to;
-    if (channel && to) {
-      const modelLabel = `${provider}/${model}`;
-      const defaultLabel = `${defaultProvider}/${defaultModel}`;
-      const modelAuthLabel = resolveModelAuthLabel({
-        provider,
-        cfg,
-        sessionEntry,
-        agentDir,
-      });
-      const authSuffix =
-        modelAuthLabel && modelAuthLabel !== "unknown" ? ` · 🔑 ${modelAuthLabel}` : "";
-      const text =
-        modelLabel === defaultLabel
-          ? `✅ New session started · model: ${modelLabel}${authSuffix}`
-          : `✅ New session started · model: ${modelLabel} (default: ${defaultLabel})${authSuffix}`;
-      await routeReply({
-        payload: { text },
-        channel,
-        to,
-        sessionKey,
-        accountId: ctx.AccountId,
-        threadId: ctx.MessageThreadId,
-        cfg,
-      });
     }
   }
   const sessionIdFinal = sessionId ?? crypto.randomUUID();

@@ -56,6 +56,11 @@ export type HandleCommandsParams = {
 export type CommandHandlerResult = {
   reply?: ReplyPayload;
   shouldContinue: boolean;
+  /**
+   * Skip the default AI greeting for a bare /new or /reset after hooks have
+   * already sent a custom onboarding message.
+   */
+  suppressBareResetPrompt?: boolean;
 };
 
 export type CommandHandler = (

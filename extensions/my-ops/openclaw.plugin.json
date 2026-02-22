@@ -1,0 +1,87 @@
+{
+  "id": "my-ops",
+  "name": "My Ops",
+  "description": "Stable adapter tools for calendar, mail, and Mowen workflows plus service scaffolding.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "adapters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "calendar": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "command": { "type": "string" },
+              "args": { "type": "array", "items": { "type": "string" } },
+              "cwd": { "type": "string" },
+              "timeoutMs": { "type": "number" },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          },
+          "mail": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "command": { "type": "string" },
+              "args": { "type": "array", "items": { "type": "string" } },
+              "cwd": { "type": "string" },
+              "timeoutMs": { "type": "number" },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          },
+          "mowen": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "command": { "type": "string" },
+              "args": { "type": "array", "items": { "type": "string" } },
+              "cwd": { "type": "string" },
+              "timeoutMs": { "type": "number" },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "service": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "tickSeconds": { "type": "number" },
+          "writeStatusFile": { "type": "boolean" }
+        }
+      },
+      "observability": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "recordCalls": { "type": "boolean" },
+          "maxOutputChars": { "type": "number" }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "adapters.calendar.command": { "label": "Calendar Adapter Command" },
+    "adapters.mail.command": { "label": "Mail Adapter Command" },
+    "adapters.mowen.command": { "label": "Mowen Adapter Command" },
+    "adapters.calendar.cwd": { "label": "Calendar Adapter CWD", "advanced": true },
+    "adapters.mail.cwd": { "label": "Mail Adapter CWD", "advanced": true },
+    "adapters.mowen.cwd": { "label": "Mowen Adapter CWD", "advanced": true }
+  }
+}

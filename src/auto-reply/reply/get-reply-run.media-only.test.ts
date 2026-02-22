@@ -80,6 +80,7 @@ vi.mock("./typing-mode.js", () => ({
 }));
 
 import { runReplyAgent } from "./agent-runner.js";
+import { routeReply } from "./route-reply.js";
 
 function baseParams(
   overrides: Partial<Parameters<typeof runPreparedReply>[0]> = {},
@@ -189,5 +190,38 @@ describe("runPreparedReply media-only handling", () => {
       text: "I didn't receive any text in your message. Please resend or add a caption.",
     });
     expect(vi.mocked(runReplyAgent)).not.toHaveBeenCalled();
+  });
+
+  it("skips the default AI greeting for bare reset when custom onboarding suppresses it", async () => {
+    const result = await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "/new",
+          RawBody: "/new",
+          CommandBody: "/new",
+          OriginatingChannel: "slack",
+          OriginatingTo: "C123",
+        },
+        sessionCtx: {
+          Body: "",
+          BodyStripped: "",
+          Provider: "slack",
+          OriginatingChannel: "slack",
+          OriginatingTo: "C123",
+        },
+        resetTriggered: true,
+        suppressBareResetPrompt: true,
+      }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(vi.mocked(runReplyAgent)).not.toHaveBeenCalled();
+    expect(vi.mocked(routeReply)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          text: expect.stringContaining("✅ New session started"),
+        }),
+      }),
+    );
   });
 });

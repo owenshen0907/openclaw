@@ -53,6 +53,7 @@ export type InlineActionResult =
       kind: "continue";
       directives: InlineDirectives;
       abortedLastRun: boolean;
+      suppressBareResetPrompt?: boolean;
     };
 
 // oxlint-disable-next-line typescript/no-explicit-any
@@ -378,5 +379,6 @@ export async function handleInlineActions(params: {
     kind: "continue",
     directives,
     abortedLastRun,
+    suppressBareResetPrompt: commandResult.suppressBareResetPrompt,
   };
 }

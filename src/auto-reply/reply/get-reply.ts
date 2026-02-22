@@ -315,6 +315,7 @@ export async function getReplyFromConfig(
   }
   directives = inlineActionResult.directives;
   abortedLastRun = inlineActionResult.abortedLastRun ?? abortedLastRun;
+  const suppressBareResetPrompt = inlineActionResult.suppressBareResetPrompt === true;
 
   await stageSandboxMedia({
     ctx,
@@ -360,6 +361,7 @@ export async function getReplyFromConfig(
     timeoutMs,
     isNewSession,
     resetTriggered,
+    suppressBareResetPrompt,
     systemSent,
     sessionEntry,
     sessionStore,

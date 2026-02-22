@@ -14,6 +14,7 @@ import { startGmailWatcherWithLogs } from "../hooks/gmail-watcher-lifecycle.js";
 import {
   clearInternalHooks,
   createInternalHookEvent,
+  registerInternalHook,
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
@@ -111,9 +112,26 @@ export async function startGatewaySidecars(params: {
     // Clear any previously registered hooks to ensure fresh loading
     clearInternalHooks();
     const loadedCount = await loadInternalHooks(params.cfg, params.defaultWorkspaceDir);
+    let restoredPluginHookCount = 0;
+    if (params.cfg.hooks?.internal?.enabled === true) {
+      for (const reg of params.pluginRegistry.hooks) {
+        if (!reg.handler) {
+          continue;
+        }
+        for (const event of reg.events) {
+          registerInternalHook(event, reg.handler);
+          restoredPluginHookCount += 1;
+        }
+      }
+    }
     if (loadedCount > 0) {
       params.logHooks.info(
         `loaded ${loadedCount} internal hook handler${loadedCount > 1 ? "s" : ""}`,
+      );
+    }
+    if (restoredPluginHookCount > 0) {
+      params.logHooks.info(
+        `restored ${restoredPluginHookCount} plugin internal hook registration${restoredPluginHookCount > 1 ? "s" : ""}`,
       );
     }
   } catch (err) {

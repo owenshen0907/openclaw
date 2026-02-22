@@ -68,6 +68,7 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleAbortTrigger,
     ];
   }
+  let suppressBareResetPrompt = false;
   const resetMatch = params.command.commandBodyNormalized.match(/^\/(new|reset)(?:\s|$)/);
   const resetRequested = Boolean(resetMatch);
   if (resetRequested && !params.command.isAuthorizedSender) {
@@ -88,6 +89,7 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       cfg: params.cfg, // Pass config for LLM slug generation
     });
     await triggerInternalHook(hookEvent);
+    suppressBareResetPrompt = hookEvent.suppressDefaultResetPrompt === true;
 
     // Send hook messages immediately if present
     if (hookEvent.messages.length > 0) {
@@ -176,8 +178,10 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
   });
   if (sendPolicy === "deny") {
     logVerbose(`Send blocked by policy for session ${params.sessionKey ?? "unknown"}`);
-    return { shouldContinue: false };
+    return { shouldContinue: false, suppressBareResetPrompt };
   }
 
-  return { shouldContinue: true };
+  return suppressBareResetPrompt
+    ? { shouldContinue: true, suppressBareResetPrompt }
+    : { shouldContinue: true };
 }

@@ -106,6 +106,12 @@ export interface InternalHookEvent {
   timestamp: Date;
   /** Messages to send back to the user (hooks can push to this array) */
   messages: string[];
+  /**
+   * When true for command:new/reset hooks, OpenClaw skips the default AI greeting
+   * that is normally generated after a session reset. Hook messages can provide
+   * a custom onboarding flow instead.
+   */
+  suppressDefaultResetPrompt?: boolean;
 }
 
 export type InternalHookHandler = (event: InternalHookEvent) => Promise<void> | void;

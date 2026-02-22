@@ -871,6 +871,24 @@ describe("handleCommands hooks", () => {
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ type: "command", action: "new" }));
     spy.mockRestore();
   });
+
+  it("propagates suppressBareResetPrompt when a reset hook requests custom onboarding", async () => {
+    const cfg = {
+      commands: { text: true },
+      hooks: { internal: { enabled: true } },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+    } as OpenClawConfig;
+    const params = buildParams("/reset", cfg);
+    const spy = vi.spyOn(internalHooks, "triggerInternalHook").mockImplementation(async (event) => {
+      event.suppressDefaultResetPrompt = true;
+    });
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(true);
+    expect(result.suppressBareResetPrompt).toBe(true);
+    spy.mockRestore();
+  });
 });
 
 describe("handleCommands context", () => {

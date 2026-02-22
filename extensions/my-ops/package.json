@@ -1,0 +1,15 @@
+{
+  "name": "@openclaw/my-ops",
+  "version": "2026.2.22",
+  "private": true,
+  "description": "Stable workflow integration bridge for calendar, mail, and Mowen adapters",
+  "type": "module",
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

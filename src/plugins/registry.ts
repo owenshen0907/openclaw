@@ -80,6 +80,7 @@ export type PluginHookRegistration = {
   entry: HookEntry;
   events: string[];
   source: string;
+  handler?: Parameters<typeof registerInternalHook>[1];
 };
 
 export type PluginServiceRegistration = {
@@ -254,6 +255,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       entry: hookEntry,
       events: normalizedEvents,
       source: record.source,
+      handler,
     });
 
     const hookSystemEnabled = config?.hooks?.internal?.enabled === true;

@@ -1,0 +1,45 @@
+# Template workflow for deterministic email replies with an approval gate.
+# Adjust command-line flags to match your installed Lobster/openclaw.invoke version.
+# The important pattern is:
+#   1) draft (read-only)
+#   2) approve (human checkpoint)
+#   3) send (side effect) with idempotencyKey
+#
+# Recommended prerequisites:
+# - my-ops plugin enabled
+# - ops_mail tool allowlisted
+# - lobster tool allowlisted
+
+name: mail-reply-approval
+args:
+  account:
+    default: "work"
+  folder:
+    default: "INBOX"
+  message_id:
+    default: "42"
+  reply_body:
+    default: "Thanks for the update.\n\n"
+  send_idempotency_key:
+    default: "mail-send-42-reply"
+
+steps:
+  - id: draft
+    command: >-
+      openclaw.invoke --tool ops_mail --action json --args-json
+      '{"action":"draft_reply","payload":{"account":"$args.account","folder":"$args.folder","id":"$args.message_id","body":"$args.reply_body"}}'
+
+  - id: approval
+    command: cat
+    stdin: $draft.stdout
+    approval: required
+
+  # NOTE:
+  # In many setups you will first inspect/transform $draft.stdout (JSON) to extract the template
+  # string, then feed that into the final send step. The exact openclaw.invoke/Lobster flags for
+  # JSON field extraction vary by version. Keep the send step behind approval regardless.
+  - id: send
+    command: >-
+      openclaw.invoke --tool ops_mail --action json --args-json
+      '{"action":"send_message","idempotencyKey":"$args.send_idempotency_key","payload":{"format":"mml","template":"<REPLACE_WITH_APPROVED_TEMPLATE>"}}'
+    condition: $approval.approved
