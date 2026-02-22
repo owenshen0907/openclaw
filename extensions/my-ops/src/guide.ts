@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { readMyOpsConfig } from "./config.js";
+import { resolveLocalFileRoots } from "./local-files.js";
 
 export const MY_OPS_GUIDE_PATH = "/my-ops/guide";
 
@@ -39,8 +40,51 @@ function escapeJsonForScript(value: unknown): string {
 
 function getGuideItems(api: OpenClawPluginApi): GuideRenderItem[] {
   const cfg = readMyOpsConfig(api.pluginConfig);
+  const localFiles = resolveLocalFileRoots(cfg);
+  const localRootHints = localFiles.rootsRaw.map((r) => `${r}`).slice(0, 4);
+  const localRootsTip =
+    localRootHints.length > 0
+      ? `当前建议目录：${localRootHints.join(" / ")}`
+      : "当前未配置额外目录；默认建议用 ~/.openclaw/workspace 和 ~/Downloads。";
 
   const items: GuideItem[] = [
+    {
+      id: "files",
+      title: "本地文件管理",
+      short: "Files",
+      area: "core fs tools",
+      status: "core",
+      summary:
+        "用 OpenClaw 核心文件工具（read/write/edit/apply_patch）处理本地文件，避免把桌面等高权限目录全开放。",
+      tips: [
+        "优先把待处理文件移动到 inbox/Downloads，再让模型读取和发送，减少 macOS 权限问题。",
+        localRootsTip,
+        `推荐 inbox：${localFiles.inboxRaw}`,
+        "模型可优先使用 ops_files 工具（paths/probe_path/ensure_inbox/send_feishu）做确定性检查与发送。",
+        "截图需求也建议走 ops_files（capture_screen / capture_screen_send_feishu）：先截图落盘，再用同一链路发飞书。",
+        "用 /ops files paths 查看当前进程对这些目录是否可读写（含 Desktop/Documents 的 TCC 快速检查）。",
+        "如果桌面返回 Operation not permitted，把文件移动到 inbox，或给 OpenClaw/终端授予桌面访问权限。",
+        "若截图失败，请在 macOS『隐私与安全性 -> 屏幕录制』里给 OpenClaw/终端授权。",
+      ],
+      actions: [
+        { label: "查看可操作目录（托底）", example: "/ops files paths" },
+        { label: "创建 inbox（托底）", example: "/ops files ensure-inbox" },
+        { label: "探测桌面权限（托底）", example: "/ops files probe ~/Desktop" },
+        {
+          label: "发文件到当前飞书会话（托底）",
+          example:
+            "/ops files send-feishu ~/.openclaw/workspace/inbox/日语学习计划表.pdf --dry-run",
+        },
+        {
+          label: "截图后发飞书（自然语言）",
+          example: "帮我截图看看桌面，并直接发回这个飞书会话",
+        },
+        {
+          label: "让模型列 PDF（自然语言）",
+          example: `请用本地文件工具列出 ${localFiles.inboxRaw} 和 ~/Downloads 里的 PDF`,
+        },
+      ],
+    },
     {
       id: "mail",
       title: "邮件管理",
@@ -202,23 +246,6 @@ function getGuideItems(api: OpenClawPluginApi): GuideRenderItem[] {
       actions: [
         { label: "精确定时", example: "cron: 每天 09:00 汇总邮件与日历" },
         { label: "周期巡检", example: "heartbeat: 每 5 分钟检查未读邮件并归类" },
-      ],
-    },
-    {
-      id: "files",
-      title: "本地文件管理",
-      short: "Local Files",
-      area: "core tool group:fs",
-      status: "core",
-      summary: "本地文件优先用内建 group:fs（read/write/edit/apply_patch），不通过 skill 绕路。",
-      tips: [
-        "文件操作前先 read，再做最小修改，减少覆盖风险。",
-        "结构化文件（JSON/YAML）尽量走 patch 或精确更新，不要全量重写。",
-        "高风险写操作前可以先输出 diff 或草稿内容供确认。",
-      ],
-      actions: [
-        { label: "读文件", example: "read(path)" },
-        { label: "补丁编辑", example: "apply_patch(...)" },
       ],
     },
     {
@@ -814,6 +841,7 @@ export function renderGuideLinkHintsText(): string {
   return [
     "常用功能导航（H5）:",
     `- ${MY_OPS_GUIDE_PATH}`,
+    `- 本地文件：${MY_OPS_GUIDE_PATH}#files`,
     `- 邮件：${MY_OPS_GUIDE_PATH}#mail`,
     `- 日历：${MY_OPS_GUIDE_PATH}#calendar`,
     `- 墨问：${MY_OPS_GUIDE_PATH}#mowen`,
@@ -826,34 +854,42 @@ export function renderGuideLinkHintsText(): string {
 export function renderGuideMenuText(): string {
   return [
     "┌─ My Ops 常用功能菜单 ─┐",
-    "│ 1) 邮件管理（Himalaya / ops_mail）",
+    "│ 1) 本地文件管理（core fs tools）",
+    "│    技巧：优先在 inbox / Downloads 操作，避免桌面 TCC 权限拦截",
+    "│    工具动作：ops_files(paths/probe_path/ensure_inbox/send_feishu/capture_screen[_send_feishu])",
+    "│    常用命令：/ops files paths /ops files ensure-inbox /ops files probe ~/Desktop",
+    "│    托底发送：/ops files send-feishu <path>（在飞书会话内使用，可先 --dry-run）",
+    "│",
+    "│ 2) 邮件管理（Himalaya / ops_mail）",
     "│    技巧：先 health / list，再做分类、草拟、发送",
     "│    常用动作：list_messages / get_message / draft_reply / send_message",
     "│    发送要求：send_message 必带 idempotencyKey（建议先 draft 再发）",
     "│    常用命令：/ops mail summary /ops mail junk list /ops mail junk clear --dry-run",
     "│",
-    "│ 2) 日历管理（ops_calendar）",
+    "│ 3) 日历管理（ops_calendar）",
     "│    技巧：先查今天/本周，再建事件或改提醒",
     "│    常用命令：/ops calendar calendars /ops calendar today /ops calendar week",
     "│    写操作：/ops calendar create|update|delete（delete 默认预览，需 --confirm）",
     "│",
-    "│ 3) 墨问（ops_mowen）",
+    "│ 4) 墨问（ops_mowen）",
     "│    技巧：用 create_doc / update_doc / set_doc（无 list/get）",
     "│    常用命令：/ops mowen fetch|post|edit（支持飞书 docx/wiki）",
     "│    例子：/ops mowen post <飞书链接> --private",
     "│",
-    "│ 4) 飞书文档（feishu 插件）",
+    "│ 5) 飞书文档（feishu 插件）",
     "│    技巧：先整理草稿，再写入文档",
     "│",
-    "│ 5) 定时任务（cron / heartbeat）",
+    "│ 6) 定时任务（cron / heartbeat）",
     "│    技巧：cron 做定时，heartbeat 做巡检",
     "│",
-    "│ 6) 审批工作流（Lobster）",
+    "│ 7) 审批工作流（Lobster）",
     "│    技巧：写操作走 draft -> approve -> execute",
     "└──────────────────────┘",
     "",
     "快捷命令",
     "- /ops status    查看适配器状态（mail/calendar/mowen 是否已接好）",
+    "- /ops files paths 查看本地文件可操作目录（含 Desktop/Documents 权限探测）",
+    "- /ops files help 查看本地文件托底命令（含 send-feishu）",
     "- /ops calendar help 查看日历托底命令（今天/本周/创建/更新/删除）",
     "- /ops mail help 查看邮件托底命令（多邮箱汇总 / 垃圾邮件清理）",
     "- /ops mowen help 查看墨问托底命令（fetch/post/edit，支持飞书 docx/wiki）",
@@ -861,6 +897,7 @@ export function renderGuideMenuText(): string {
     "- /status        查看当前模型与会话状态",
     "",
     "你也可以直接发一句话开始：",
+    "- “先看一下 ~/.openclaw/workspace/inbox 和 ~/Downloads 里的 PDF，找到日语学习计划表并发到飞书”",
     "- “先帮我看一下今天日历”",
     "- “列出最近 10 封未读邮件并按优先级分类”",
     "- “把这段内容发成墨问私有文章（直接发布）”",

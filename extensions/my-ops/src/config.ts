@@ -11,6 +11,11 @@ export type AdapterConfig = {
 
 export type MyOpsPluginConfig = {
   adapters: Record<AdapterDomain, AdapterConfig>;
+  localFiles: {
+    roots: string[];
+    inboxPath?: string;
+    showTccHints: boolean;
+  };
   service: {
     enabled: boolean;
     tickSeconds: number;
@@ -98,12 +103,21 @@ export function readMyOpsConfig(raw: unknown): MyOpsPluginConfig {
     obj.observability && typeof obj.observability === "object" && !Array.isArray(obj.observability)
       ? (obj.observability as Record<string, unknown>)
       : {};
+  const localFilesRaw =
+    obj.localFiles && typeof obj.localFiles === "object" && !Array.isArray(obj.localFiles)
+      ? (obj.localFiles as Record<string, unknown>)
+      : {};
 
   return {
     adapters: {
       calendar: normalizeAdapter(adaptersRaw.calendar),
       mail: normalizeAdapter(adaptersRaw.mail),
       mowen: normalizeAdapter(adaptersRaw.mowen),
+    },
+    localFiles: {
+      roots: readStringArray(localFilesRaw.roots),
+      inboxPath: readString(localFilesRaw.inboxPath),
+      showTccHints: readBoolean(localFilesRaw.showTccHints, true),
     },
     service: {
       enabled: readBoolean(serviceRaw.enabled, true),

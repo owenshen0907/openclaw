@@ -73,6 +73,15 @@
           "recordCalls": { "type": "boolean" },
           "maxOutputChars": { "type": "number" }
         }
+      },
+      "localFiles": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "roots": { "type": "array", "items": { "type": "string" } },
+          "inboxPath": { "type": "string" },
+          "showTccHints": { "type": "boolean" }
+        }
       }
     }
   },
@@ -82,6 +91,8 @@
     "adapters.mowen.command": { "label": "Mowen Adapter Command" },
     "adapters.calendar.cwd": { "label": "Calendar Adapter CWD", "advanced": true },
     "adapters.mail.cwd": { "label": "Mail Adapter CWD", "advanced": true },
-    "adapters.mowen.cwd": { "label": "Mowen Adapter CWD", "advanced": true }
+    "adapters.mowen.cwd": { "label": "Mowen Adapter CWD", "advanced": true },
+    "localFiles.roots": { "label": "Local File Roots" },
+    "localFiles.inboxPath": { "label": "Local File Inbox Path" }
   }
 }

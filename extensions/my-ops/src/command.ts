@@ -1,16 +1,21 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createHash } from "node:crypto";
+import { constants as FS_CONSTANTS } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { readMyOpsConfig } from "./config.js";
 import { MY_OPS_GUIDE_PATH, renderGuideLinkHintsText, renderGuideMenuText } from "./guide.js";
+import { expandUserPath, resolveLocalFileRoots } from "./local-files.js";
 import { resolveCallsLogPath, resolveMyOpsStateDir, resolveServiceStatusPath } from "./state.js";
 
 type OpsCommandCtx = {
   args?: string;
   config: Record<string, unknown>;
   channel: string;
+  from?: string;
+  to?: string;
   accountId?: string;
+  messageThreadId?: number;
 };
 
 type ParsedArgs = {
@@ -56,6 +61,10 @@ function renderStatus(api: OpenClawPluginApi): string {
   );
   lines.push(
     `Observability: recordCalls=${cfg.observability.recordCalls}, maxOutputChars=${cfg.observability.maxOutputChars}`,
+  );
+  const localFiles = resolveLocalFileRoots(cfg);
+  lines.push(
+    `Local files: roots=${localFiles.rootsRaw.length} inbox=${localFiles.inboxRaw} tccHints=${localFiles.showTccHints}`,
   );
   lines.push("");
   lines.push("Adapters:");
@@ -1758,6 +1767,344 @@ async function handleCalendarCommand(
   return { text: `Unknown /ops calendar subcommand: ${sub}\n\n${calendarCommandHelp()}` };
 }
 
+type LocalPathProbeResult = {
+  raw: string;
+  resolved: string;
+  exists: boolean;
+  isDir?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+  listable?: boolean;
+  error?: string;
+};
+
+function filesCommandHelp(): string {
+  return [
+    "Local files helper (uses core fs tools; this command only shows safe roots/status):",
+    "",
+    "/ops files paths",
+    "  查看 my-ops 配置的本地文件根目录、inbox 目录，以及当前进程是否可读写",
+    "",
+    "/ops files ensure-inbox",
+    "  创建本地文件 inbox 目录（建议把桌面文件先移动到这里，再让模型处理）",
+    "",
+    "/ops files probe <path>",
+    "  检查指定路径是否可访问（常用于确认 Desktop/Documents 是否被 TCC 拦住）",
+    "",
+    "/ops files send-feishu <path> [--dry-run] [--name <fileName>] [--account <feishuAccountId>]",
+    "  把允许目录中的文件直接发到当前飞书会话（当前频道需为飞书）",
+    "",
+    "推荐流程（避免给 OpenClaw 过大权限）:",
+    "1. 用 /ops files paths 看可操作目录",
+    "2. 把桌面/下载的文件移动到 inbox（或 Downloads）",
+    "3. 让模型用 core fs 工具读取/整理，再用 Feishu 工具发送",
+  ].join("\n");
+}
+
+async function probeLocalPath(raw: string): Promise<LocalPathProbeResult> {
+  const normalized = expandUserPath(raw);
+  const out: LocalPathProbeResult = {
+    raw,
+    resolved: normalized || raw,
+    exists: false,
+  };
+
+  try {
+    const stat = await fs.stat(out.resolved);
+    out.exists = true;
+    out.isDir = stat.isDirectory();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    out.error = message;
+    if (/enoent/i.test(message)) {
+      return out;
+    }
+    return out;
+  }
+
+  try {
+    await fs.access(out.resolved, FS_CONSTANTS.R_OK);
+    out.readable = true;
+  } catch {
+    out.readable = false;
+  }
+  try {
+    await fs.access(out.resolved, FS_CONSTANTS.W_OK);
+    out.writable = true;
+  } catch {
+    out.writable = false;
+  }
+  if (out.isDir) {
+    try {
+      await fs.readdir(out.resolved, { withFileTypes: false });
+      out.listable = true;
+    } catch {
+      out.listable = false;
+    }
+  }
+
+  return out;
+}
+
+function isPathWithinRoot(targetPath: string, rootPath: string): boolean {
+  const target = path.resolve(targetPath);
+  const root = path.resolve(rootPath);
+  const rel = path.relative(root, target);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function isPathAllowedByLocalRoots(filePath: string, roots: string[]): boolean {
+  return roots.some((root) => isPathWithinRoot(filePath, root));
+}
+
+function inferFeishuSendMsgType(fileName: string): "file" | "media" {
+  const ext = path.extname(fileName).toLowerCase();
+  if ([".mp4", ".mov", ".avi", ".m4v"].includes(ext)) {
+    return "media";
+  }
+  return "file";
+}
+
+function formatLocalPathProbeLine(result: LocalPathProbeResult): string[] {
+  const flags = [
+    `exists=${result.exists}`,
+    ...(result.isDir === undefined ? [] : [`dir=${result.isDir}`]),
+    ...(result.readable === undefined ? [] : [`read=${result.readable}`]),
+    ...(result.writable === undefined ? [] : [`write=${result.writable}`]),
+    ...(result.listable === undefined ? [] : [`list=${result.listable}`]),
+  ].join(" ");
+  return [
+    `- ${result.raw} -> ${result.resolved}`,
+    `  ${flags}`,
+    ...(result.error ? [`  error: ${snippet(result.error, 220)}`] : []),
+  ];
+}
+
+async function handleFilesPathsCommand(api: OpenClawPluginApi): Promise<{ text: string }> {
+  const cfg = readMyOpsConfig(api.pluginConfig);
+  const localFiles = resolveLocalFileRoots(cfg);
+  const probes = await Promise.all(localFiles.rootsRaw.map((raw) => probeLocalPath(raw)));
+
+  const lines: string[] = [];
+  lines.push("Local file roots (for core fs tools)");
+  lines.push(`- inbox: ${localFiles.inboxRaw} -> ${localFiles.inboxResolved}`);
+  lines.push(`- roots configured (${localFiles.rootsRaw.length}):`);
+  for (const probe of probes) {
+    lines.push(...formatLocalPathProbeLine(probe));
+  }
+
+  if (localFiles.showTccHints) {
+    const tccTargets = ["~/Desktop", "~/Documents"];
+    const tccProbes = await Promise.all(tccTargets.map((raw) => probeLocalPath(raw)));
+    lines.push("");
+    lines.push("macOS TCC quick check (common protected folders)");
+    for (const probe of tccProbes) {
+      lines.push(...formatLocalPathProbeLine(probe));
+    }
+    lines.push(
+      "提示：如果这里显示 read/list=false 或 Operation not permitted，请把文件移动到 inbox/Downloads，或给 OpenClaw/终端授权。",
+    );
+  }
+
+  lines.push("");
+  lines.push(
+    "建议：模型处理本地文件时优先使用 core fs 工具（read/write/edit/apply_patch），限制在以上根目录内。",
+  );
+  return { text: lines.join("\n") };
+}
+
+async function handleFilesEnsureInboxCommand(api: OpenClawPluginApi): Promise<{ text: string }> {
+  const cfg = readMyOpsConfig(api.pluginConfig);
+  const localFiles = resolveLocalFileRoots(cfg);
+  const target = localFiles.inboxResolved;
+  await fs.mkdir(target, { recursive: true });
+  const probe = await probeLocalPath(localFiles.inboxRaw);
+  return {
+    text: [
+      "Local file inbox ready",
+      `- inbox: ${localFiles.inboxRaw} -> ${target}`,
+      ...formatLocalPathProbeLine(probe),
+      "",
+      "你现在可以把桌面 PDF 移动到这个目录，再让模型读取并发到飞书。",
+    ].join("\n"),
+  };
+}
+
+async function handleFilesProbeCommand(parsed: ParsedArgs): Promise<{ text: string }> {
+  const target = parsed.positionals[2] ?? readFlagString(parsed, "path");
+  if (!target) {
+    return { text: filesCommandHelp() };
+  }
+  const probe = await probeLocalPath(target);
+  return {
+    text: ["Local file path probe", ...formatLocalPathProbeLine(probe)].join("\n"),
+  };
+}
+
+async function handleFilesSendFeishuCommand(
+  api: OpenClawPluginApi,
+  ctx: OpsCommandCtx,
+  parsed: ParsedArgs,
+): Promise<{ text: string }> {
+  const targetArg = parsed.positionals[2] ?? readFlagString(parsed, "path");
+  if (!targetArg) {
+    return { text: filesCommandHelp() };
+  }
+  if ((ctx.channel ?? "").toLowerCase() !== "feishu") {
+    return {
+      text: [
+        "Files send-feishu 失败",
+        "- 当前命令不在飞书渠道上下文中",
+        "- 请在飞书私聊/群聊中使用，或改用飞书插件工具发送",
+      ].join("\n"),
+    };
+  }
+  if (!ctx.to) {
+    return {
+      text: [
+        "Files send-feishu 失败",
+        "- 当前会话缺少飞书目标（ctx.to）",
+        "- 请在飞书会话中重试",
+      ].join("\n"),
+    };
+  }
+
+  const cfg = readMyOpsConfig(api.pluginConfig);
+  const localFiles = resolveLocalFileRoots(cfg);
+  const rawPath = targetArg.trim();
+  const resolvedPath = expandUserPath(rawPath);
+  const fileName = readFlagString(parsed, "name", "file-name") ?? path.basename(resolvedPath);
+  const dryRun = hasFlag(parsed, "dry-run", "dry");
+  const feishuAccountOverride = readFlagString(parsed, "account", "feishu-account");
+
+  const probe = await probeLocalPath(rawPath);
+  if (!probe.exists) {
+    return {
+      text: ["Files send-feishu 失败", ...formatLocalPathProbeLine(probe)].join("\n"),
+    };
+  }
+  if (probe.isDir) {
+    return {
+      text: [
+        "Files send-feishu 失败",
+        ...formatLocalPathProbeLine(probe),
+        "- 目标必须是文件，当前是目录",
+      ].join("\n"),
+    };
+  }
+  if (probe.readable === false) {
+    return {
+      text: [
+        "Files send-feishu 失败",
+        ...formatLocalPathProbeLine(probe),
+        "- 当前进程无读取权限（可能是 macOS TCC）",
+        `- 建议先移动到 inbox: ${localFiles.inboxRaw}`,
+      ].join("\n"),
+    };
+  }
+
+  if (!isPathAllowedByLocalRoots(resolvedPath, localFiles.rootsResolved)) {
+    return {
+      text: [
+        "Files send-feishu 失败",
+        `- 路径不在允许目录内: ${resolvedPath}`,
+        `- 允许目录: ${localFiles.rootsRaw.join(", ")}`,
+        `- 建议先移动到 inbox: ${localFiles.inboxRaw}`,
+        "- 可用 /ops files paths 查看当前配置与权限状态",
+      ].join("\n"),
+    };
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(resolvedPath);
+  } catch (err) {
+    return {
+      text: [
+        "Files send-feishu 失败",
+        `- 无法读取文件信息: ${resolvedPath}`,
+        `- error: ${err instanceof Error ? err.message : String(err)}`,
+      ].join("\n"),
+    };
+  }
+
+  const msgType = inferFeishuSendMsgType(fileName);
+  if (dryRun) {
+    return {
+      text: [
+        "Files send-feishu dry-run",
+        `- channel: ${ctx.channel}`,
+        `- to: ${ctx.to}`,
+        `- accountId: ${feishuAccountOverride ?? ctx.accountId ?? "(auto)"}`,
+        `- path: ${rawPath}`,
+        `- resolved: ${resolvedPath}`,
+        `- fileName: ${fileName}`,
+        `- size: ${stat.size} bytes`,
+        `- msgType: ${msgType}`,
+        "- 执行时会：uploadFileFeishu -> sendFileFeishu",
+      ].join("\n"),
+    };
+  }
+
+  const mediaMod = await import("../../feishu/src/media.js");
+  const fileType = mediaMod.detectFileType(fileName);
+  const sendCfg = ctx.config as Parameters<typeof mediaMod.uploadFileFeishu>[0]["cfg"];
+
+  const uploaded = await mediaMod.uploadFileFeishu({
+    cfg: sendCfg,
+    file: resolvedPath,
+    fileName,
+    fileType,
+    accountId: feishuAccountOverride ?? ctx.accountId,
+  });
+  const sent = await mediaMod.sendFileFeishu({
+    cfg: sendCfg,
+    to: ctx.to,
+    fileKey: uploaded.fileKey,
+    msgType,
+    accountId: feishuAccountOverride ?? ctx.accountId,
+  });
+
+  return {
+    text: [
+      "Files send-feishu 成功",
+      `- path: ${rawPath}`,
+      `- resolved: ${resolvedPath}`,
+      `- fileName: ${fileName}`,
+      `- size: ${stat.size} bytes`,
+      `- fileKey: ${uploaded.fileKey}`,
+      `- messageId: ${sent.messageId}`,
+      `- chatId: ${sent.chatId}`,
+    ].join("\n"),
+  };
+}
+
+async function handleFilesCommand(
+  api: OpenClawPluginApi,
+  ctx: OpsCommandCtx,
+  args: string,
+): Promise<{ text: string }> {
+  const parsed = parseArgs(args);
+  const sub = (parsed.positionals[1] ?? "").toLowerCase();
+
+  if (!sub || sub === "help") {
+    return { text: filesCommandHelp() };
+  }
+  if (sub === "paths" || sub === "roots" || sub === "status") {
+    return await handleFilesPathsCommand(api);
+  }
+  if (sub === "ensure-inbox" || sub === "mkdir-inbox" || sub === "init") {
+    return await handleFilesEnsureInboxCommand(api);
+  }
+  if (sub === "probe" || sub === "check") {
+    return await handleFilesProbeCommand(parsed);
+  }
+  if (sub === "send-feishu" || sub === "send") {
+    return await handleFilesSendFeishuCommand(api, ctx, parsed);
+  }
+  return { text: `Unknown /ops files subcommand: ${sub}\n\n${filesCommandHelp()}` };
+}
+
 function renderOpsHelp(): string {
   return [
     "Unknown subcommand.",
@@ -1767,6 +2114,7 @@ function renderOpsHelp(): string {
     "- /ops paths",
     "- /ops guide",
     "- /ops menu",
+    "- /ops files paths",
     "- /ops calendar help",
     "- /ops mail help",
     "- /ops mowen help",
@@ -1803,6 +2151,15 @@ export function registerMyOpsCommand(api: OpenClawPluginApi) {
         return {
           text: renderGuideMenuText(),
         };
+      }
+      if (lower === "files" || lower.startsWith("files ")) {
+        try {
+          return await handleFilesCommand(api, ctx as OpsCommandCtx, arg);
+        } catch (err) {
+          return {
+            text: `Files helper command failed:\n- ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
       }
       if (lower === "mowen" || lower.startsWith("mowen ")) {
         try {
